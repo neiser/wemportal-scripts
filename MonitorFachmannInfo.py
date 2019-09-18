@@ -13,33 +13,35 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 MAP_METRICS = {
-    'Zeitstempel': {'name': 'wemportal_timestamp', 'type': 'info'},
+    'Zeitstempel': {'name': 'timestamp', 'type': 'info'},
     'Außentemperatur': {'name': 'current_outside_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
     'AT Mittelwert': {'name': 'average_outside_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
     'AT Langzeitwert': {'name': 'longtime_outside_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
     'Raumsolltemperatur': {'name': 'room_set_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
-    'Vorlaufsolltemperatur': {'name': 'inlet_set_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
-    'Vorlauftemperatur': {'name': 'inlet_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Vorlaufsolltemperatur': {'name': 'water_inlet_set_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Vorlauftemperatur': {'name': 'water_inlet_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
     'Warmwassertemperatur': {'name': 'hot_water_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
-    'Leistungsanforderung': {'name': 'performance_request_ratio', 'type': 'gauge', 'strip': len(' %'), 'percent': True},
-    'Schaltdifferenz dynamisch': {'name': 'dynamic_switch_difference_kelvin', 'type': 'gauge', 'strip': len(' K')},
-    'LWT': {'name': 'heat_exchanger_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
-    'Rücklauftemperatur': {'name': 'outlet_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Leistungsanforderung': {'name': 'performance_request_ratio', 'type': 'gauge', 'strip': len(' %')},
+    'Schaltdifferenz dynamisch': {'name': 'dynamic_switch_temperature_difference_kelvin', 'type': 'gauge',
+                                  'strip': len(' K')},
+    'LWT': {'name': 'lwt_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Rücklauftemperatur': {'name': 'water_outlet_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Drehzahl Pumpe': {'name': 'pump_rotation_ratio', 'type': 'gauge', 'strip': len(' %')},
+    'Volumenstrom': {'name': 'volume_flow_cubicmeter_per_hour', 'type': 'gauge', 'strip': len('m3/h')},
+    'Stellung Umschaltventil': {'name': 'crossover_valve_setting', 'type': 'info'},
+    'Soll Frequenz Verdichter': {'name': 'set_frequency_compressor_hertz', 'type': 'gauge', 'strip': len(' Hz')},
+    'Ist Frequenz Verdichter': {'name': 'frequency_compressor_hertz', 'type': 'gauge', 'strip': len(' Hz')},
+    'Luftansaugtemperatur': {'name': 'air_inlet_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Wärmetauscher AG Eintritt': {'name': 'outside_heat_exchanger_inlet_temperature_celsius', 'type': 'gauge',
+                                  'strip': len(' °C')},
+    'Wärmetauscher AG Mitte': {'name': 'outside_heat_exchanger_middle_temperature_celsius', 'type': 'gauge',
+                               'strip': len(' °C')},
+    'Druckgas': {'name': 'pressure_gas_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Wärmetauscher Innen': {'name': 'inside_heat_exchanger_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Kältemittel Innen': {'name': 'refrigerant_inside_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
 }
 
-# Drehzahl Pumpe=80 %
-# Volumenstrom=2.1m3/h
-# Stellung Umschaltventil=Warmwasser
-# Version WWP-SG=V2.0
-# Version WWP-CPU=V2.2
-# Soll Frequenz Verdichter=35 Hz
-# Ist Frequenz Verdichter=35 Hz
-# Luftansaugtemperatur=17.0 °C
-# Wärmetauscher AG Eintritt=4.0 °C
-# Wärmetauscher AG Mitte=14.0 °C
-# Druckgas=66.0 °C
-# Wärmetauscher Innen=49.5 °C
-# Kältemittel Innen=46.0 °C
+
 # Betriebsstd. Verdichter=103 h
 # Schaltspiele Verdichter=836
 # Schaltspiele Abtauen=0
@@ -135,6 +137,15 @@ def parse_page():
     return result
 
 
+def parse_aus_value(str, strip=None):
+    if str == 'Aus':
+        return 0
+    elif strip is not None:
+        return str[:-int(strip)]
+    else:
+        return str
+
+
 def collect_metrics():
     refresh_page()
     result = parse_page()
@@ -143,11 +154,10 @@ def collect_metrics():
         print("{}={}".format(key, value))
         metric = MAP_METRICS.get(key)
         if metric is not None:
-            name = metric['name']
-            if metric.get('strip') is not None:
-                value = value[:-int(metric['strip'])]
+            name = 'wemportal_' + metric['name']
             t = metric.get('type', 'gauge')
             if t is 'gauge':
+                value = parse_aus_value(value, metric.get('strip'))
                 yield GaugeMetricFamily(name, key, value=value)
             if t is 'info':
                 yield InfoMetricFamily(name, key, value={'value': value})
