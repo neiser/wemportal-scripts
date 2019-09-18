@@ -1,6 +1,10 @@
 import os
+import time
 from timeit import default_timer as timer
 
+from prometheus_client import start_http_server, PLATFORM_COLLECTOR, PROCESS_COLLECTOR, GC_COLLECTOR
+from prometheus_client.core import GaugeMetricFamily, REGISTRY
+from prometheus_client.metrics_core import InfoMetricFamily
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
@@ -8,34 +12,75 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+MAP_METRICS = {
+    'Zeitstempel': {'name': 'wemportal_timestamp', 'type': 'info'},
+    'Außentemperatur': {'name': 'current_outside_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'AT Mittelwert': {'name': 'average_outside_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'AT Langzeitwert': {'name': 'longtime_outside_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Raumsolltemperatur': {'name': 'room_set_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Vorlaufsolltemperatur': {'name': 'inlet_set_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Vorlauftemperatur': {'name': 'inlet_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Warmwassertemperatur': {'name': 'hot_water_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Leistungsanforderung': {'name': 'performance_request_ratio', 'type': 'gauge', 'strip': len(' %'), 'percent': True},
+    'Schaltdifferenz dynamisch': {'name': 'dynamic_switch_difference_kelvin', 'type': 'gauge', 'strip': len(' K')},
+    'LWT': {'name': 'heat_exchanger_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Rücklauftemperatur': {'name': 'outlet_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+}
 
-def main():
-    wemportal_user = os.environ['WEMPORTAL_USER']
-    wemportal_password = os.environ['WEMPORTAL_PASSWORD']
-    fachmann_password = os.environ['FACHMANN_PASSWORD']
+# Drehzahl Pumpe=80 %
+# Volumenstrom=2.1m3/h
+# Stellung Umschaltventil=Warmwasser
+# Version WWP-SG=V2.0
+# Version WWP-CPU=V2.2
+# Soll Frequenz Verdichter=35 Hz
+# Ist Frequenz Verdichter=35 Hz
+# Luftansaugtemperatur=17.0 °C
+# Wärmetauscher AG Eintritt=4.0 °C
+# Wärmetauscher AG Mitte=14.0 °C
+# Druckgas=66.0 °C
+# Wärmetauscher Innen=49.5 °C
+# Kältemittel Innen=46.0 °C
+# Betriebsstd. Verdichter=103 h
+# Schaltspiele Verdichter=836
+# Schaltspiele Abtauen=0
+# Außengerät Variante=WWP LS X-B R(-E)
+# Status E-Heizung 1=Aus
+# Status E-Heizung 2=Aus
+# Betriebsstunden E1=0 h
+# Betriebsstunden E2=0 h
+# Schaltspiele E1=0
+# Schaltspiele E2=0
+# Gesamt Energie Tage=6.299 KWh
+# Gesamt Energie Monate=299.715 KWh
+# Gesamt Energie Jahre=367.594 KWh
+# Heizen Energie Tage=0.502 KWh
+# Heizen Energie Monat=148.636 KWh
+# Heizen Energie Jahre=148.636 KWh
+# WW Energie Tag=5.796 KWh
+# WW Energie Monat=151.075 KWh
+# WW Energie Jahr=218.954 KWh
+# Kühlen Energie Tage=0.000 KWh
+# Kühlen Energie Monate=0.000 KWh
+# Kühlen Energie Jahre=0.000 KWh
 
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-
-    driver = webdriver.Chrome(options=chrome_options)
-    try:
-        login_and_load_fachmann_page(driver, fachmann_password, wemportal_password, wemportal_user)
-        wait_until_page_loaded(driver)
-        parse_and_print_values(driver)
-
-    finally:
-        driver.quit()
+chrome_options = Options()
+chrome_options.add_argument("--headless")
+driver = webdriver.Chrome(options=chrome_options)
 
 
-def refresh_page(driver):
+def refresh_page():
     print("Refreshing page...")
     WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.ID, "ctl00_DeviceContextControl1_RefreshDeviceDataButton"))
     ).click()
-    wait_until_page_loaded(driver)
+    wait_until_page_loaded()
 
 
-def login_and_load_fachmann_page(driver, fachmann_password, wemportal_password, wemportal_user):
+def login_and_load_fachmann_page():
+    wemportal_user = os.environ['WEMPORTAL_USER']
+    wemportal_password = os.environ['WEMPORTAL_PASSWORD']
+    fachmann_password = os.environ['FACHMANN_PASSWORD']
+
     driver.get("https://www.wemportal.com/Web/")
     print("Logging in...")
     driver.find_element(By.ID, "ctl00_content_tbxUserName").click()
@@ -54,7 +99,7 @@ def login_and_load_fachmann_page(driver, fachmann_password, wemportal_password, 
     driver.switch_to.default_content()
 
 
-def wait_until_page_loaded(driver):
+def wait_until_page_loaded():
     while True:
         refresh_button_span = driver.find_element(By.ID, "ctl00_DeviceContextControl1_RefreshDeviceDataButton")
         print("Waiting for refresh to be done...".format(refresh_button_span.id), end="")
@@ -70,9 +115,10 @@ def wait_until_page_loaded(driver):
     print("Page loaded")
 
 
-def parse_and_print_values(driver):
+def parse_page():
     timestamp = driver.find_element(By.ID, "ctl00_DeviceContextControl1_lblDeviceLastDataUpdateInfo").text
-    print("Timestamp {}".format(timestamp))
+    result = {"Zeitstempel": timestamp}
+    print("Parsing page with timestamp {}".format(timestamp))
 
     map_id_to_name = {}
 
@@ -81,12 +127,49 @@ def parse_and_print_values(driver):
         value = element.text
         map_id_to_name[stripped_id] = value
 
-    print("Found {} data points".format(len(map_id_to_name)))
-
     for element in driver.find_elements(By.CLASS_NAME, "simpleDataValue"):
         stripped_id = element.get_attribute('id')[:-9]
         value = element.text
-        print("{}={}".format(map_id_to_name[stripped_id], value))
+        result[map_id_to_name[stripped_id]] = value
+    print("Found {} data points".format(len(result)))
+    return result
 
 
-if __name__ == "__main__": main()
+def collect_metrics():
+    refresh_page()
+    result = parse_page()
+
+    for key, value in result.items():
+        print("{}={}".format(key, value))
+        metric = MAP_METRICS.get(key)
+        if metric is not None:
+            name = metric['name']
+            if metric.get('strip') is not None:
+                value = value[:-int(metric['strip'])]
+            t = metric.get('type', 'gauge')
+            if t is 'gauge':
+                yield GaugeMetricFamily(name, key, value=value)
+            if t is 'info':
+                yield InfoMetricFamily(name, key, value={'value': value})
+
+
+class CustomCollector(object):
+    def collect(self):
+        metrics = list(collect_metrics())
+        print("Exporting {} metrics".format(len(metrics)))
+        return metrics
+
+
+if __name__ == "__main__":
+    try:
+        for c in [PROCESS_COLLECTOR, PLATFORM_COLLECTOR, GC_COLLECTOR]:
+            REGISTRY.unregister(c)
+        login_and_load_fachmann_page()
+        wait_until_page_loaded()
+        REGISTRY.register(CustomCollector())
+        start_http_server(8000)
+        print("Running...")
+        while True:
+            time.sleep(100)
+    finally:
+        driver.quit()
