@@ -4,7 +4,7 @@ from timeit import default_timer as timer
 
 from prometheus_client import start_http_server, PLATFORM_COLLECTOR, PROCESS_COLLECTOR, GC_COLLECTOR
 from prometheus_client.core import GaugeMetricFamily, REGISTRY
-from prometheus_client.metrics_core import InfoMetricFamily
+from prometheus_client.metrics_core import InfoMetricFamily, CounterMetricFamily
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
@@ -39,31 +39,28 @@ MAP_METRICS = {
     'Druckgas': {'name': 'pressure_gas_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
     'Wärmetauscher Innen': {'name': 'inside_heat_exchanger_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
     'Kältemittel Innen': {'name': 'refrigerant_inside_temperature_celsius', 'type': 'gauge', 'strip': len(' °C')},
+    'Betriebsstd. Verdichter': {'name': 'compressor_operating_hours', 'type': 'gauge', 'strip': len(' h')},
+    'Schaltspiele Verdichter': {'name': 'compressor_cycles', 'type': 'counter'},
+    'Schaltspiele Abtauen': {'name': 'defrosting_cycles', 'type': 'counter'},
+    'Status E-Heizung 1': {'name': 'heating1_state', 'type': 'gauge'},
+    'Status E-Heizung 2': {'name': 'heating2_state', 'type': 'gauge'},
+    'Betriebsstunden E1': {'name': 'heating1_operating_hours', 'type': 'gauge', 'strip': len(' h')},
+    'Betriebsstunden E2': {'name': 'heating2_operating_hours', 'type': 'gauge', 'strip': len(' h')},
+    'Schaltspiele E1': {'name': 'heating1_cycles', 'type': 'counter'},
+    'Schaltspiele E2': {'name': 'heating2_cycles', 'type': 'counter'},
+    'Gesamt Energie Tage': {'name': 'total_energy_per_day', 'type': 'gauge', 'strip': len(' KWh')},
+    'Gesamt Energie Monate': {'name': 'total_energy_per_month', 'type': 'gauge', 'strip': len(' KWh')},
+    'Gesamt Energie Jahre': {'name': 'total_energy_per_year', 'type': 'gauge', 'strip': len(' KWh')},
+    'Heizen Energie Tage': {'name': 'heating_energy_per_day', 'type': 'gauge', 'strip': len(' KWh')},
+    'Heizen Energie Monat': {'name': 'heating_energy_per_month', 'type': 'gauge', 'strip': len(' KWh')},
+    'Heizen Energie Jahre': {'name': 'heating_energy_per_year', 'type': 'gauge', 'strip': len(' KWh')},
+    'WW Energie Tag': {'name': 'water_energy_per_day', 'type': 'gauge', 'strip': len(' KWh')},
+    'WW Energie Monat': {'name': 'water_energy_per_month', 'type': 'gauge', 'strip': len(' KWh')},
+    'WW Energie Jahr': {'name': 'water_energy_per_year', 'type': 'gauge', 'strip': len(' KWh')},
+    'Kühlen Energie Tage': {'name': 'cooling_energy_per_day', 'type': 'gauge', 'strip': len(' KWh')},
+    'Kühlen Energie Monate': {'name': 'cooling_energy_per_month', 'type': 'gauge', 'strip': len(' KWh')},
+    'Kühlen Energie Jahre': {'name': 'cooling_energy_per_year', 'type': 'gauge', 'strip': len(' KWh')},
 }
-
-
-# Betriebsstd. Verdichter=103 h
-# Schaltspiele Verdichter=836
-# Schaltspiele Abtauen=0
-# Außengerät Variante=WWP LS X-B R(-E)
-# Status E-Heizung 1=Aus
-# Status E-Heizung 2=Aus
-# Betriebsstunden E1=0 h
-# Betriebsstunden E2=0 h
-# Schaltspiele E1=0
-# Schaltspiele E2=0
-# Gesamt Energie Tage=6.299 KWh
-# Gesamt Energie Monate=299.715 KWh
-# Gesamt Energie Jahre=367.594 KWh
-# Heizen Energie Tage=0.502 KWh
-# Heizen Energie Monat=148.636 KWh
-# Heizen Energie Jahre=148.636 KWh
-# WW Energie Tag=5.796 KWh
-# WW Energie Monat=151.075 KWh
-# WW Energie Jahr=218.954 KWh
-# Kühlen Energie Tage=0.000 KWh
-# Kühlen Energie Monate=0.000 KWh
-# Kühlen Energie Jahre=0.000 KWh
 
 chrome_options = Options()
 chrome_options.add_argument("--headless")
@@ -137,13 +134,13 @@ def parse_page():
     return result
 
 
-def parse_aus_value(str, strip=None):
+def parse_value(str, strip=None):
     if str == 'Aus':
         return 0
     elif strip is not None:
-        return str[:-int(strip)]
+        return float(str[:-int(strip)])
     else:
-        return str
+        return float(str)
 
 
 def collect_metrics():
@@ -151,14 +148,16 @@ def collect_metrics():
     result = parse_page()
 
     for key, value in result.items():
-        print("{}={}".format(key, value))
         metric = MAP_METRICS.get(key)
         if metric is not None:
             name = 'wemportal_' + metric['name']
             t = metric.get('type', 'gauge')
             if t is 'gauge':
-                value = parse_aus_value(value, metric.get('strip'))
+                value = parse_value(value, metric.get('strip'))
                 yield GaugeMetricFamily(name, key, value=value)
+            if t is 'counter':
+                value = parse_value(value, metric.get('strip'))
+                yield CounterMetricFamily(name, key, value=value)
             if t is 'info':
                 yield InfoMetricFamily(name, key, value={'value': value})
 
