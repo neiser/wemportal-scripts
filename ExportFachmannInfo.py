@@ -65,6 +65,7 @@ MAP_METRICS = {
 
 chrome_options = Options()
 chrome_options.add_argument("--headless")
+chrome_options.add_argument("--disable-gpu")
 
 
 def refresh_page(driver):
