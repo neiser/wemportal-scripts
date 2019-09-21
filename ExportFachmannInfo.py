@@ -1,12 +1,13 @@
 import os
 import time
+from threading import Lock
 from timeit import default_timer as timer
 
 from prometheus_client import start_http_server, PLATFORM_COLLECTOR, PROCESS_COLLECTOR, GC_COLLECTOR
 from prometheus_client.core import GaugeMetricFamily, REGISTRY
 from prometheus_client.metrics_core import InfoMetricFamily, CounterMetricFamily
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -64,18 +65,17 @@ MAP_METRICS = {
 
 chrome_options = Options()
 chrome_options.add_argument("--headless")
-driver = webdriver.Chrome(options=chrome_options)
 
 
-def refresh_page():
+def refresh_page(driver):
     print("Refreshing page...")
     WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.ID, "ctl00_DeviceContextControl1_RefreshDeviceDataButton"))
     ).click()
-    wait_until_page_loaded()
+    wait_until_page_loaded(driver)
 
 
-def login_and_load_fachmann_page():
+def login_and_load_fachmann_page(driver):
     wemportal_user = os.environ['WEMPORTAL_USER']
     wemportal_password = os.environ['WEMPORTAL_PASSWORD']
     fachmann_password = os.environ['FACHMANN_PASSWORD']
@@ -98,10 +98,10 @@ def login_and_load_fachmann_page():
     driver.switch_to.default_content()
 
 
-def wait_until_page_loaded():
+def wait_until_page_loaded(driver):
     while True:
         refresh_button_span = driver.find_element(By.ID, "ctl00_DeviceContextControl1_RefreshDeviceDataButton")
-        print("Waiting for refresh to be done...".format(refresh_button_span.id), end="")
+        print("Waiting for page loaded...".format(refresh_button_span.id), end="")
         start = timer()
         try:
             WebDriverWait(driver, 8, poll_frequency=0.2).until(
@@ -114,7 +114,7 @@ def wait_until_page_loaded():
     print("Page loaded")
 
 
-def parse_page():
+def parse_page(driver):
     timestamp = driver.find_element(By.ID, "ctl00_DeviceContextControl1_lblDeviceLastDataUpdateInfo").text
     result = {"Zeitstempel": timestamp}
     print("Parsing page with timestamp {}".format(timestamp))
@@ -134,18 +134,17 @@ def parse_page():
     return result
 
 
-def parse_value(str, strip=None):
-    if str == 'Aus':
+def parse_value(value, strip=None):
+    if value == 'Aus':
         return 0
     elif strip is not None:
-        return float(str[:-int(strip)])
+        return float(value[:-int(strip)])
     else:
-        return float(str)
+        return float(value)
 
 
-def collect_metrics():
-    refresh_page()
-    result = parse_page()
+def collect_metrics_from_page(driver):
+    result = parse_page(driver)
 
     for key, value in result.items():
         metric = MAP_METRICS.get(key)
@@ -163,22 +162,74 @@ def collect_metrics():
 
 
 class CustomCollector(object):
+    def __init__(self):
+        self.lock = Lock()
+        self.driver = None
+        self.refreshed = False
+        self.collections_done = 0
+        self.start_driver()
+
     def collect(self):
-        metrics = list(collect_metrics())
-        print("Exporting {} metrics".format(len(metrics)))
-        return metrics
+        self.lock.acquire()
+        try:
+            return self.collect_metrics()
+        finally:
+            self.lock.release()
+
+    def collect_metrics(self, retries_left=3):
+        try:
+            self.ensure_driver_restarted()
+            self.ensure_refreshed()
+            metrics = list(collect_metrics_from_page(self.driver))
+            print("Exporting {} metrics".format(len(metrics)))
+            self.collections_done = self.collections_done + 1
+            return metrics
+        except WebDriverException as e:
+            print("Encountered web driver exception:")
+            print(e)
+            if retries_left == 0:
+                print("No retries left, bailing out")
+                raise e
+            print("Restarting driver... (retries_left={})".format(retries_left))
+            self.restart_driver()
+            return self.collect_metrics(retries_left - 1)
+        finally:
+            self.refreshed = False
+
+    def ensure_driver_restarted(self):
+        if self.collections_done <= 200:
+            return
+        try:
+            print("Restarting driver as {} collections done".format(self.collections_done))
+            self.restart_driver()
+        finally:
+            self.collections_done = 0
+
+    def ensure_refreshed(self):
+        if not self.refreshed:
+            refresh_page(self.driver)
+            self.refreshed = True
+
+    def restart_driver(self):
+        self.driver.quit()
+        self.start_driver()
+
+    def start_driver(self):
+        self.driver = webdriver.Chrome(options=chrome_options)
+        login_and_load_fachmann_page(self.driver)
+        wait_until_page_loaded(self.driver)
+        self.refreshed = True
+
+    def __del__(self):
+        print("Shutting down...")
+        self.driver.quit()
 
 
 if __name__ == "__main__":
-    try:
-        for c in [PROCESS_COLLECTOR, PLATFORM_COLLECTOR, GC_COLLECTOR]:
-            REGISTRY.unregister(c)
-        login_and_load_fachmann_page()
-        wait_until_page_loaded()
-        REGISTRY.register(CustomCollector())
-        start_http_server(8000)
-        print("Running...")
-        while True:
-            time.sleep(100)
-    finally:
-        driver.quit()
+    for c in [PROCESS_COLLECTOR, PLATFORM_COLLECTOR, GC_COLLECTOR]:
+        REGISTRY.unregister(c)
+    REGISTRY.register(CustomCollector())
+    start_http_server(8000)
+    print("Running...")
+    while True:
+        time.sleep(100)
