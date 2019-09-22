@@ -1,0 +1,16 @@
+[Unit]
+Description=Prometheus exporter for the Weishaupt WEM Portal
+After=network.target
+
+[Service]
+User=homematic
+Type=simple
+Restart=on-failure
+RestartSec=3
+ExecStart=/usr/bin/python3 -u /home/homematic/wemportal-scripts/ExportFachmannInfo.py
+Environment=WEMPORTAL_USER=REPLACE_ME
+Environment=WEMPORTAL_PASSWORD=REPLACE_ME
+Environment=FACHMANN_PASSWORD=REPLACE_ME
+
+[Install]
+WantedBy=multi-user.target
