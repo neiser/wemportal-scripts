@@ -136,7 +136,7 @@ def parse_page(driver):
 
 
 def parse_value(value, strip=None):
-    if value == 'Aus':
+    if value == 'Aus' or value == '--':
         return 0
     elif strip is not None:
         return float(value[:-int(strip)])
